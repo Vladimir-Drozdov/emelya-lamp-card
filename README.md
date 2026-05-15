@@ -1,1 +1,1 @@
-# Emelya Kettle Card - Masonry Kettle Card
+# Emelya Lamp Card - Masonry Lamp Card
