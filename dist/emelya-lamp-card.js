@@ -127,7 +127,6 @@ const getCardMod = (base = "/local") => {
                 .slider{
                   height: 64px !important;
                   border-radius: 20px !important;
-                  background: #1C1B1F !important;
                   position: relative !important;
                 }
                 .slider::before {
@@ -143,10 +142,17 @@ const getCardMod = (base = "/local") => {
                     linear-gradient(#fff 0 0);
                   -webkit-mask-composite: xor !important;
                   mask-composite: exclude !important;
+                  z-index: 1 !important;
                 }
                 .slider .slider-track-bar::after{
                   right: 16px !important;
                   --handle-margin: 16px !important;
+                  width: 6px !important;
+                  height: 32px !important;
+                }
+                .slider .slider-track-background{
+                  background: none !important;
+                  --control-slider-background: none !important;
                 }
                 .slider .slider-track-cursor::after{
                   right: 16px !important;
@@ -161,6 +167,8 @@ const getCardMod = (base = "/local") => {
                   height: 64px !important;
                   border-radius: 20px !important;
                   /* background управляется через JS динамически */
+                  background: none !important;
+                  background-color: transparent !important;
                 }
               `,
               "." : `
@@ -212,6 +220,8 @@ const getCardMod = (base = "/local") => {
                 .slider .slider-track-bar::after{
                   right: 16px !important;
                   --handle-margin: 16px !important;
+                  width: 6px !important;
+                  height: 32px !important;
                 }
                 .slider .slider-track-cursor::after{
                   right: 16px !important;
@@ -434,7 +444,7 @@ class EmelyaLampCard extends LitElement {
       height: 20px;
     }
 
-    /* ── Slider wrapper ── */
+    /* Slider wrapper */
     .slider-wrap {
       flex: 1;
       min-height: 64px;
@@ -465,6 +475,7 @@ class EmelyaLampCard extends LitElement {
     // Храним последнее известное состояние для обновления слайдера
     this._lastIsOn = null;
     this._preloadedBg = null;
+    this._handleObservers = [];
   }
 
   setConfig(config) {
@@ -564,14 +575,19 @@ class EmelyaLampCard extends LitElement {
   */
   _updateSliderTrackBarColor(isOn) {
     if (!this._sliderCard) return;
-    this._sliderCard.style.setProperty(
-      "--emelya-track-color",
-      isOn ? "#4D4A54" : "linear-gradient(270deg, #343239 0%, #1C1B1F 100%)"
-    );
-    this._sliderCard.style.setProperty(
-      "--emelya-slider-bg",
-      isOn ? "linear-gradient(90deg, #343239 50%, #1C1B1F 100%)" : "#1C1B1F"
-    );
+
+    const tileColor = isOn ? "#4D4A54" : "#1C1B1F";
+    const haCard = this._sliderCard.shadowRoot?.querySelector("ha-card");
+    if (haCard) haCard.style.setProperty("--tile-color", tileColor);
+
+    const trackColor = isOn
+      ? "#4D4A54"
+      : "linear-gradient(270deg, #343239 0%, #1C1B1F 100%)";
+    const sliderBg = isOn
+      ? "linear-gradient(90deg, #343239 50%, #1C1B1F 100%)"
+      : "#1C1B1F";
+    this._applyTrackBarColor(this._sliderCard, trackColor);
+    this._applySliderBgColor(this._sliderCard, sliderBg);
   }
 
   _applyTrackBarColor(root, color, depth = 0) {
@@ -665,6 +681,15 @@ class EmelyaLampCard extends LitElement {
    * Это гарантирует что ни card_mod, ни HA не смогут перезаписать цвет.
    */
   _watchTrackBarColor(card) {
+    const getTileColor = () =>
+    this._hass?.states?.[this.config?.entity]?.state === "on"
+      ? "#4D4A54"
+      : "#1C1B1F";
+
+    const updateTileColor = () => {
+      const haCard = card.shadowRoot?.querySelector("ha-card");
+      if (haCard) haCard.style.setProperty("--tile-color", getTileColor());
+    };
     const getColor = () =>
       this._hass?.states?.[this.config?.entity]?.state === "on"
         ? "#4D4A54"
