@@ -338,7 +338,6 @@ class EmelyaLampCard extends LitElement {
       mask-composite: exclude !important;
     }
 
-    /* ── Header ── */
     .header {
       display: flex;
       justify-content: space-between;
@@ -400,7 +399,6 @@ class EmelyaLampCard extends LitElement {
       color: rgba(255,255,255,0.85);
     }
 
-    /* ── Footer ── */
     .footer {
       display: flex;
       align-items: center;
@@ -410,7 +408,6 @@ class EmelyaLampCard extends LitElement {
       z-index: 2;
     }
 
-    /* ── Power button ── */
     .power-btn {
       width: 64px;
       height: 64px;
@@ -645,7 +642,7 @@ class EmelyaLampCard extends LitElement {
       const card = await helpers.createCardElement(cfg);
       if (this._hass) card.hass = this._buildHassForCard(this._hass);
 
-      // Вставляем СРАЗУ в финальный контейнер внутри shadow root.
+      // Вставляем сразу в финальный контейнер внутри shadow root.
       // card-mod работает здесь и элемент никуда не перемещается.
       wrap.appendChild(card);
       this._forceShowHandle(card);
