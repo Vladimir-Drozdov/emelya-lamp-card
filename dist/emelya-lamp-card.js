@@ -1101,33 +1101,27 @@ class EmelyaLampCardEditor extends LitElement {
         .hass=${this.hass}
         .data=${this._config}
         .schema=${[
-          { name: "entity", label: "Объект (если не указан object_id/unique_id)", selector: { entity: { domain: ["light", "switch"] } } }
-        ]}
-        @value-changed=${this._valueChanged}
-      ></ha-form>
-
-      <ha-combo-box
-        .hass=${this.hass}
-        label="object_id (если entity не выбран)"
-        .items=${objectIdOptions}
-        .value=${this._config?.object_id || ""}
-        @value-changed=${this._onObjectIdChanged}
-        allow-custom-value
-      ></ha-combo-box>
-
-      <ha-combo-box
-        .hass=${this.hass}
-        label="unique_id (если entity не выбран)"
-        .items=${uniqueIdOptions}
-        .value=${this._config?.unique_id || ""}
-        @value-changed=${this._onUniqueIdChanged}
-        allow-custom-value
-      ></ha-combo-box>
-
-      <ha-form
-        .hass=${this.hass}
-        .data=${this._config}
-        .schema=${[
+          { name: "entity", label: "Объект (если не указан object_id/unique_id)", selector: { entity: { domain: ["light", "switch"] } } },
+          {
+            name: "object_id",
+            label: "object_id (если entity не выбран)",
+            selector: {
+              select: {
+                custom_value: true,
+                options: objectIdOptions.map(o => ({ value: o.value, label: o.label }))
+              }
+            }
+          },
+          {
+            name: "unique_id",
+            label: "unique_id (если entity не выбран)",
+            selector: {
+              select: {
+                custom_value: true,
+                options: uniqueIdOptions.map(o => ({ value: o.value, label: o.label }))
+              }
+            }
+          },
           { name: "name", label: "Название", selector: { text: {} } },
           { name: "base_path", label: "Путь к ресурсам", selector: { text: {} } }
         ]}
