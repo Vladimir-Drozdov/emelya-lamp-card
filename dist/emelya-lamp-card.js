@@ -675,6 +675,11 @@ class EmelyaLampCard extends LitElement {
       if (token !== this._buildToken) { this._buildingFor = null; return; }
 
       const cfg = normalizeTileConfig(entityId, this.base, this._hass);
+      if (cfg.features.length === 0) {
+        this._buildingFor = null;
+        this.requestUpdate();
+        return;
+      }
       const card = await helpers.createCardElement(cfg);
       if (this._hass) card.hass = this._buildHassForCard(this._hass);
 
@@ -935,12 +940,11 @@ class EmelyaLampCard extends LitElement {
             <img src="${base}/images/container-images/light_button.png" alt="power" />
           </div>
 
-          ${this._sliderCard ? html`
-            <div
-              class="slider-wrap ${this._sliderReady ? 'ready' : ''}"
-              data-slider-mount
-            ></div>
-          ` : html`<div data-slider-mount style="display:none"></div>`}
+          <div
+            class="slider-wrap ${this._sliderReady ? 'ready' : ''}"
+            data-slider-mount
+            style="${this._sliderCard ? '' : 'display:none'}"
+          ></div>
         </div>
       </div>
     </ha-card>
@@ -1133,7 +1137,6 @@ class EmelyaLampCardEditor extends LitElement {
   _getObjectIdOptions() {
     if (!this.hass) return [];
     return Object.keys(this.hass.states)
-      .filter(id => id.startsWith("light.") || id.startsWith("switch."))
       .map(id => {
         const objectId = id.split(".")[1];
         const friendlyName = this.hass.states[id]?.attributes?.friendly_name;
@@ -1145,7 +1148,6 @@ class EmelyaLampCardEditor extends LitElement {
   _getUniqueIdOptions() {
     if (!this.hass?.entities) return [];
     return Object.values(this.hass.entities)
-      .filter(e => e.entity_id?.startsWith("light.") || e.entity_id?.startsWith("switch."))
       .filter(e => e.unique_id)
       .map(e => ({ value: e.unique_id, label: `${e.unique_id}  (${e.entity_id})` }))
       .sort((a, b) => a.value.localeCompare(b.value));
