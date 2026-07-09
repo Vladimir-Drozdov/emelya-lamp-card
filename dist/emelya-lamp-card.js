@@ -274,16 +274,29 @@ const getCardMod = (base = "/local") => {
 // supportedColorModes определяет какой слайдер показывать:
 // - если лампа поддерживает brightness → только light-brightness
 // - если нет brightness, но есть color_temp → только light-color-temp
-function normalizeTileConfig(entity, base = "/local", hass = null) {
-  let features = [{ type: "light-brightness" }];
+function resolveEntityId(config, hass) {
+  if (config.entity) return config.entity;
+  if (config.object_id && hass) {
+    // find any entity whose object_id (the part after the dot) matches
+    const match = Object.keys(hass.states).find(id => id.split(".")[1] === config.object_id);
+    if (match) return match;
+  }
+  return null;
+}
 
-  if (hass) {
-    const stateObj = hass.states[entity];
+function getDomain(entityId) {
+  return entityId ? entityId.split(".")[0] : null;
+}
+function normalizeTileConfig(entityId, base = "/local", hass = null) {
+  const domain = getDomain(entityId);
+  let features = [];
+
+  if (domain === "light" && hass) {
+    features = [{ type: "light-brightness" }];
+    const stateObj = hass.states[entityId];
     const modes = stateObj?.attributes?.supported_color_modes ?? [];
-    // brightness доступна если есть хотя бы один режим кроме "onoff" и "unknown"
     const hasBrightness = modes.some(m => !["onoff", "unknown"].includes(m));
     if (!hasBrightness) {
-      // нет brightness - пробуем color_temp
       const hasColorTemp = modes.includes("color_temp");
       features = hasColorTemp ? [{ type: "light-color-temp" }] : [];
     }
@@ -291,7 +304,7 @@ function normalizeTileConfig(entity, base = "/local", hass = null) {
 
   return {
     type: "tile",
-    entity: entity,
+    entity: entityId,
     card_mod: getCardMod(base),
     features
   };
@@ -338,6 +351,7 @@ class EmelyaLampCard extends LitElement {
       mask-composite: exclude !important;
     }
 
+    /* ── Header ── */
     .header {
       display: flex;
       justify-content: space-between;
@@ -399,6 +413,7 @@ class EmelyaLampCard extends LitElement {
       color: rgba(255,255,255,0.85);
     }
 
+    /* ── Footer ── */
     .footer {
       display: flex;
       align-items: center;
@@ -408,6 +423,7 @@ class EmelyaLampCard extends LitElement {
       z-index: 2;
     }
 
+    /* ── Power button ── */
     .power-btn {
       width: 64px;
       height: 64px;
@@ -477,8 +493,10 @@ class EmelyaLampCard extends LitElement {
 
   setConfig(config) {
     this.config = {
-      name: "Лампа",
+      name: "",
       image: "",
+      entity: "",
+      object_id: "",
       tap_action: { action: "none" },
       hold_action: { action: "none" },
       double_tap_action: { action: "none" },
@@ -501,27 +519,21 @@ class EmelyaLampCard extends LitElement {
   get hass() { return this._hass; }
 
   set hass(hass) {
-    // Сначала сохраняем brightness из старого hass (пока свет ещё "on")
-    // Это критично: когда приходит новый hass с state:"off", brightness уже null
     this._saveBrightness(this._hass);
-    // Из нового hass тоже сохраняем - если свет включён и brightness положительный
     this._saveBrightness(hass);
     this._hass = hass;
 
     if (this._sliderCard) {
-      // Карточка находится в shadow root - обновляем hass прямо там.
-      // _buildHassForCard патчит brightness когда свет выключен,
-      // чтобы слайдер визуально не сбрасывался.
       this._sliderCard.hass = this._buildHassForCard(hass);
     }
 
-    if (this._hass && !this._sliderCard && this.config?.entity) {
+    const entityId = resolveEntityId(this.config, hass);
+    if (this._hass && !this._sliderCard && entityId && getDomain(entityId) === "light") {
       this._buildSliderCard();
     }
 
-    // Обновляем цвет slider-track-bar при смене состояния
-    if (hass && this.config?.entity) {
-      const isOn = hass.states[this.config.entity]?.state === "on";
+    if (hass && entityId) {
+      const isOn = hass.states[entityId]?.state === "on";
       if (isOn !== this._lastIsOn) {
         this._lastIsOn = isOn;
         this._updateSliderTrackBarColor(isOn);
@@ -532,8 +544,8 @@ class EmelyaLampCard extends LitElement {
   }
 
   _buildHassForCard(hass) {
-    if (!hass || !this.config?.entity) return hass;
-    const entityId = this.config.entity;
+    const entityId = resolveEntityId(this.config, hass);
+    if (!hass || !entityId) return hass;
     const stateObj = hass.states[entityId];
     if (!stateObj) return hass;
 
@@ -559,11 +571,12 @@ class EmelyaLampCard extends LitElement {
   }
 
   _saveBrightness(hass) {
-    if (!hass || !this.config?.entity) return;
-    const stateObj = hass.states[this.config.entity];
+    const entityId = resolveEntityId(this.config, hass);
+    if (!hass || !entityId) return;
+    const stateObj = hass.states[entityId];
     const brightness = stateObj?.attributes?.brightness;
     if (typeof brightness === "number" && brightness > 0) {
-      this._lastBrightness[this.config.entity] = brightness;
+      this._lastBrightness[entityId] = brightness;
     }
   }
 
@@ -622,28 +635,31 @@ class EmelyaLampCard extends LitElement {
       if (token !== this._buildToken) return;
     }
 
-    if (!this.config?.entity) return;
+    const entityId = resolveEntityId(this.config, this._hass);
+    if (!entityId) return;
 
-    // Ждём первого рендера чтобы shadow root и [data-slider-mount] существовали
+    const domain = getDomain(entityId);
+    if (domain !== "light") {
+      this.requestUpdate();
+      return;
+    }
+
     await this.updateComplete;
     if (token !== this._buildToken) return;
 
     const wrap = this.shadowRoot?.querySelector("[data-slider-mount]");
     if (!wrap) return;
 
-    // Очищаем старую карточку
     wrap.innerHTML = "";
 
     try {
       const helpers = await window.loadCardHelpers();
       if (token !== this._buildToken) return;
 
-      const cfg = normalizeTileConfig(this.config.entity, this.base, this._hass);
+      const cfg = normalizeTileConfig(entityId, this.base, this._hass);
       const card = await helpers.createCardElement(cfg);
       if (this._hass) card.hass = this._buildHassForCard(this._hass);
 
-      // Вставляем сразу в финальный контейнер внутри shadow root.
-      // card-mod работает здесь и элемент никуда не перемещается.
       wrap.appendChild(card);
       this._forceShowHandle(card);
 
@@ -652,11 +668,8 @@ class EmelyaLampCard extends LitElement {
 
       this._sliderCard = card;
 
-      // Применяем начальный цвет трека сразу после построения карточки
-      const isOn = this._hass?.states?.[this.config.entity]?.state === "on";
+      const isOn = this._hass?.states?.[entityId]?.state === "on";
       this._lastIsOn = isOn;
-      // Даём card_mod полностью отработать (двойной rAF + setTimeout),
-      // затем принудительно ставим нужный цвет поверх
       await yieldToMain();
       this._forceShowHandle(card);
       await yieldToMain();
@@ -679,7 +692,7 @@ class EmelyaLampCard extends LitElement {
    */
   _watchTrackBarColor(card) {
     const getTileColor = () =>
-    this._hass?.states?.[this.config?.entity]?.state === "on"
+    this._hass?.states?.[resolveEntityId(this.config, this._hass)]?.state === "on"
       ? "#4D4A54"
       : "#1C1B1F";
 
@@ -688,12 +701,12 @@ class EmelyaLampCard extends LitElement {
       if (haCard) haCard.style.setProperty("--tile-color", getTileColor());
     };
     const getColor = () =>
-      this._hass?.states?.[this.config?.entity]?.state === "on"
+      this._hass?.states?.[resolveEntityId(this.config, this._hass)]?.state === "on"
         ? "#4D4A54"
         : "linear-gradient(270deg, #343239 0%, #1C1B1F 100%)";
 
     const getSliderBg = () =>
-        this._hass?.states?.[this.config?.entity]?.state === "on"
+        this._hass?.states?.[resolveEntityId(this.config, this._hass)]?.state === "on"
           ? "linear-gradient(90deg, #343239 50%, #1C1B1F 100%)"
           : "#1C1B1F";
 
@@ -808,22 +821,27 @@ class EmelyaLampCard extends LitElement {
 
   _togglePower(e) {
     e.stopPropagation();
-    if (!this._hass || !this.config?.entity) return;
-    const entityId = this.config.entity;
+    const entityId = resolveEntityId(this.config, this._hass);
+    if (!this._hass || !entityId) return;
+    const domain = getDomain(entityId);
     const isOff = this._hass.states[entityId]?.state === "off";
 
-    if (isOff) {
-      const brightness = this._lastBrightness[entityId];
-      const data = { entity_id: entityId };
-      if (brightness != null) data.brightness = brightness;
-      this._hass.callService("light", "turn_on", data);
-    } else {
-      const stateObj = this._hass.states[entityId];
-      const brightness = stateObj?.attributes?.brightness;
-      if (typeof brightness === "number" && brightness > 0) {
-        this._lastBrightness[entityId] = brightness;
+    if (domain === "light") {
+      if (isOff) {
+        const brightness = this._lastBrightness[entityId];
+        const data = { entity_id: entityId };
+        if (brightness != null) data.brightness = brightness;
+        this._hass.callService("light", "turn_on", data);
+      } else {
+        const stateObj = this._hass.states[entityId];
+        const brightness = stateObj?.attributes?.brightness;
+        if (typeof brightness === "number" && brightness > 0) {
+          this._lastBrightness[entityId] = brightness;
+        }
+        this._hass.callService("light", "turn_off", { entity_id: entityId });
       }
-      this._hass.callService("light", "turn_off", { entity_id: entityId });
+    } else {
+      this._hass.callService(domain, isOff ? "turn_on" : "turn_off", { entity_id: entityId });
     }
   }
 
@@ -876,7 +894,7 @@ class EmelyaLampCard extends LitElement {
   }
 
   render() {
-    const entityId = this.config?.entity;
+    const entityId = resolveEntityId(this.config, this._hass);
     const stateObj = this._hass?.states?.[entityId];
     const isOn = stateObj?.state === "on";
     const name = this.config?.name || stateObj?.attributes?.friendly_name || "Лампа";
@@ -897,10 +915,12 @@ class EmelyaLampCard extends LitElement {
             <img src="${base}/images/container-images/light_button.png" alt="power" />
           </div>
 
-          <div
-            class="slider-wrap ${this._sliderReady ? 'ready' : ''}"
-            data-slider-mount
-          ></div>
+          ${this._sliderCard ? html`
+            <div
+              class="slider-wrap ${this._sliderReady ? 'ready' : ''}"
+              data-slider-mount
+            ></div>
+          ` : html`<div data-slider-mount style="display:none"></div>`}
         </div>
       </div>
     </ha-card>
@@ -915,7 +935,8 @@ class EmelyaLampCard extends LitElement {
   static getStubConfig() {
     return {
       entity: "",
-      name: "Лампа",
+      object_id: "",
+      name: "",
       image: "",
       background_image: "",
       base_path: "/local",
@@ -1055,7 +1076,8 @@ class EmelyaLampCardEditor extends LitElement {
         .hass=${this.hass}
         .data=${this._config}
         .schema=${[
-          { name: "entity", label: "Светильник", required: true, selector: { entity: { domain: "light" } } },
+          { name: "entity", label: "Объект (необязательно, если указан object_id)", selector: { entity: { domain: ["light", "switch"] } } },
+          { name: "object_id", label: "object_id (если entity не выбран)", selector: { text: {} } },
           { name: "name", label: "Название", selector: { text: {} } },
           { name: "base_path", label: "Путь к ресурсам", selector: { text: {} } }
         ]}
