@@ -276,11 +276,18 @@ const getCardMod = (base = "/local") => {
 // - если нет brightness, но есть color_temp → только light-color-temp
 function resolveEntityId(config, hass) {
   if (config.entity) return config.entity;
+
+  if (config.unique_id && hass?.entities) {
+    const match = Object.values(hass.entities).find(e => e.unique_id === config.unique_id);
+    if (match) return match.entity_id;
+  }
+
   if (config.object_id && hass) {
     // find any entity whose object_id (the part after the dot) matches
     const match = Object.keys(hass.states).find(id => id.split(".")[1] === config.object_id);
     if (match) return match;
   }
+
   return null;
 }
 
@@ -482,6 +489,7 @@ class EmelyaLampCard extends LitElement {
     this._sliderReady = false;
     this._sliderCard = null;
     this._buildToken = 0;
+    this._buildingFor = null;
     this._lastBrightness = {};
     this._holdTimer = null;
     this._lastTap = 0;
@@ -504,6 +512,7 @@ class EmelyaLampCard extends LitElement {
       ...config
     };
     this.base = this.config.base_path || "/local";
+    this._buildingFor = null;
     this._buildSliderCard();
     this._preloadBackground();
   }
@@ -528,7 +537,15 @@ class EmelyaLampCard extends LitElement {
     }
 
     const entityId = resolveEntityId(this.config, hass);
-    if (this._hass && !this._sliderCard && entityId && getDomain(entityId) === "light") {
+    const domain = getDomain(entityId);
+    if (
+      this._hass &&
+      !this._sliderCard &&
+      entityId &&
+      domain === "light" &&
+      this._buildingFor !== entityId
+    ) {
+      this._buildingFor = entityId;
       this._buildSliderCard();
     }
 
@@ -632,29 +649,30 @@ class EmelyaLampCard extends LitElement {
         const check = () => { if (this._hass) resolve(); else setTimeout(check, 50); };
         check();
       });
-      if (token !== this._buildToken) return;
+      if (token !== this._buildToken) { this._buildingFor = null; return; }
     }
 
     const entityId = resolveEntityId(this.config, this._hass);
-    if (!entityId) return;
+    if (!entityId) { this._buildingFor = null; return; }
 
     const domain = getDomain(entityId);
     if (domain !== "light") {
+      this._buildingFor = null;
       this.requestUpdate();
       return;
     }
 
     await this.updateComplete;
-    if (token !== this._buildToken) return;
+    if (token !== this._buildToken) { this._buildingFor = null; return; }
 
     const wrap = this.shadowRoot?.querySelector("[data-slider-mount]");
-    if (!wrap) return;
+    if (!wrap) { this._buildingFor = null; return; }
 
     wrap.innerHTML = "";
 
     try {
       const helpers = await window.loadCardHelpers();
-      if (token !== this._buildToken) return;
+      if (token !== this._buildToken) { this._buildingFor = null; return; }
 
       const cfg = normalizeTileConfig(entityId, this.base, this._hass);
       const card = await helpers.createCardElement(cfg);
@@ -664,7 +682,7 @@ class EmelyaLampCard extends LitElement {
       this._forceShowHandle(card);
 
       await this._waitForCardModReady(card);
-      if (token !== this._buildToken) return;
+      if (token !== this._buildToken) { this._buildingFor = null; return; }
 
       this._sliderCard = card;
 
@@ -677,10 +695,12 @@ class EmelyaLampCard extends LitElement {
       await yieldToMain();
       this._watchTrackBarColor(card);
       this._sliderReady = true;
+      this._buildingFor = null;
       this.requestUpdate();
 
     } catch (err) {
       console.error("emelya-lamp-card: build error", err);
+      this._buildingFor = null;
     }
   }
 
@@ -1044,7 +1064,9 @@ class EmelyaLampCardEditor extends LitElement {
   setConfig(config) {
     this._config = {
       entity: "",
-      name: "Лампа",
+      object_id: "",
+      unique_id: "",
+      name: "",
       image: "",
       base_path: "/local",
       tap_action: { action: "none" },
@@ -1071,19 +1093,80 @@ class EmelyaLampCardEditor extends LitElement {
   }
 
   _objectTab() {
+    const objectIdOptions = this._getObjectIdOptions();
+    const uniqueIdOptions = this._getUniqueIdOptions();
+
     return html`
       <ha-form
         .hass=${this.hass}
         .data=${this._config}
         .schema=${[
-          { name: "entity", label: "Объект (необязательно, если указан object_id)", selector: { entity: { domain: ["light", "switch"] } } },
-          { name: "object_id", label: "object_id (если entity не выбран)", selector: { text: {} } },
+          { name: "entity", label: "Объект (если не указан object_id/unique_id)", selector: { entity: { domain: ["light", "switch"] } } }
+        ]}
+        @value-changed=${this._valueChanged}
+      ></ha-form>
+
+      <ha-combo-box
+        .hass=${this.hass}
+        label="object_id (если entity не выбран)"
+        .items=${objectIdOptions}
+        .value=${this._config?.object_id || ""}
+        @value-changed=${this._onObjectIdChanged}
+        allow-custom-value
+      ></ha-combo-box>
+
+      <ha-combo-box
+        .hass=${this.hass}
+        label="unique_id (если entity не выбран)"
+        .items=${uniqueIdOptions}
+        .value=${this._config?.unique_id || ""}
+        @value-changed=${this._onUniqueIdChanged}
+        allow-custom-value
+      ></ha-combo-box>
+
+      <ha-form
+        .hass=${this.hass}
+        .data=${this._config}
+        .schema=${[
           { name: "name", label: "Название", selector: { text: {} } },
           { name: "base_path", label: "Путь к ресурсам", selector: { text: {} } }
         ]}
         @value-changed=${this._valueChanged}
       ></ha-form>
     `;
+  }
+
+  _getObjectIdOptions() {
+    if (!this.hass) return [];
+    return Object.keys(this.hass.states)
+      .filter(id => id.startsWith("light.") || id.startsWith("switch."))
+      .map(id => {
+        const objectId = id.split(".")[1];
+        const friendlyName = this.hass.states[id]?.attributes?.friendly_name;
+        return { value: objectId, label: friendlyName ? `${objectId}  (${friendlyName})` : objectId };
+      })
+      .sort((a, b) => a.value.localeCompare(b.value));
+  }
+
+  _getUniqueIdOptions() {
+    if (!this.hass?.entities) return [];
+    return Object.values(this.hass.entities)
+      .filter(e => e.entity_id?.startsWith("light.") || e.entity_id?.startsWith("switch."))
+      .filter(e => e.unique_id)
+      .map(e => ({ value: e.unique_id, label: `${e.unique_id}  (${e.entity_id})` }))
+      .sort((a, b) => a.value.localeCompare(b.value));
+  }
+
+  _onObjectIdChanged(e) {
+    e.stopPropagation();
+    this._config = { ...this._config, object_id: e.detail.value };
+    this._fire();
+  }
+
+  _onUniqueIdChanged(e) {
+    e.stopPropagation();
+    this._config = { ...this._config, unique_id: e.detail.value };
+    this._fire();
   }
 
   _appearanceTab() {
